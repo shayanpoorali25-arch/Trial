@@ -224,7 +224,10 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
                 f"[bg][wm]overlay=x=(W-w)/2:y={overlay_y}[out]"
             )
         else:
-            logger.warning(f"⚠️ فایل واترمارک پیدا نشد ({WATERMARK_PATH}).")
+            if not ENABLE_WATERMARK:
+                logger.info("ℹ️ Watermark is disabled in settings.")
+            else:
+                logger.warning(f"⚠️ فایل واترمارک پیدا نشد ({WATERMARK_PATH}).")
             filter_complex = f"[0:v]{sub_filter}[out]"
 
         cmd.extend([
@@ -241,7 +244,7 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
         ])
 
         if progress:
-            progress.update(stage=1, sub_text="در حال چسباندن زیرنویس و واترمارک...", pct=0, force=True)
+            progress.update(stage=1, sub_text="در حال چسباندن زیرنویس روی ویدیو...", pct=0, force=True)
 
         err_tmp = tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".log", encoding="utf-8")
         err_path = err_tmp.name
@@ -259,19 +262,24 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
                         try:
                             us = int(line.split("=", 1)[1])
                             pct = min(100.0, us / (duration * 1_000_000) * 100)
-                            progress.update(stage=3, sub_text="در حال چسباندن روی ویدیو...", pct=pct)
+                            # 👈 اینجا از stage=1 استفاده میکنیم که با مراحل جدید همخوانی داره
+                            progress.update(stage=1, sub_text="در حال چسباندن روی ویدیو...", pct=pct)
                         except ValueError:
                             pass
                 proc.wait()
         finally:
             if os.path.exists(err_path):
-                os.unlink(err_path)
+                try:
+                    os.unlink(err_path)
+                except OSError:
+                    pass
 
         if not os.path.exists(output_path):
             raise RuntimeError("فایل خروجی ساخته نشد.")
 
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
 
+        # 👈 اینجا از stage=2 استفاده میکنیم (آپلود)
         if progress:
             progress.update(stage=2, sub_text="در حال ارسال به تلگرام...", pct=100, extra=f"📦 حجم ویدیو: {size_mb:.1f} MB", force=True)
 
