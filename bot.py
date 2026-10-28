@@ -2,7 +2,6 @@
 منطق اصلی ربات تلگرام — حالت آماده‌باش
 لینک یا فایل ویدیو هر لحظه پذیرفته می‌شه، بدون نیاز به دکمه.
 """
-from video_processor import process_incoming, save_srt, WORK_DIR, VideoTooLongError
 import os
 import re
 import time
@@ -11,10 +10,11 @@ import threading
 import telebot
 from telebot import types
 from flask import Flask, request
-import queue_manager
+
 import config
+import queue_manager
 from progress_reporter import ProgressReporter
-from video_processor import process_incoming, save_srt, WORK_DIR
+from video_processor import process_incoming, save_srt, WORK_DIR, VideoTooLongError
 from gemini_service import transcribe_audio
 from renderer import render_and_send
 from license_manager import verify_and_consume_license
@@ -34,16 +34,14 @@ INSTAGRAM_PATTERN = re.compile(
     r"^https?://(?:www\.)?(?:instagram\.com|instagr\.am)/(?:p|reel|reels|tv)/[A-Za-z0-9_-]+"
 )
 
-authenticated_users: set = set()  # کاربرانی که لایسنس تایید شده دارند
-trial_used_users: set = set()     # 👈 کاربرانی که تستشون رو انجام دادند
-
 # ===========================================
 # مدیریت کاربران و وضعیت‌ها
 # ===========================================
 _busy_lock = threading.Lock()
 _busy_users: set = set()
 user_last_inputs = {}
-authenticated_users: set = set()  # 👈 کاربرانی که لایسنس تایید شده دارند
+authenticated_users: set = set()  # کاربرانی که لایسنس تایید شده دارند
+trial_used_users: set = set()     # کاربرانی که تستشون رو انجام دادند
 
 def _is_busy(user_id: int) -> bool:
     with _busy_lock:
@@ -82,7 +80,6 @@ def is_video_file(message: types.Message) -> bool:
 def handle_start(message: types.Message):
     logger.info(f"[LOG] User {message.from_user.id} started the bot.")
     
-    # 👈 چک میکنیم اگر کاربر قبلا لایسنس داده باشد
     if message.from_user.id in authenticated_users:
         text = (
             f"سلام مجدد {message.from_user.first_name} 👋\n\n"
@@ -90,7 +87,6 @@ def handle_start(message: types.Message):
             "🔗 حالا می‌توانید لینک اینستاگرام (زیر ۹۰ ثانیه) یا فایل ویدیو خود را بفرستید تا پردازش شود."
         )
     else:
-        # اگر کاربر جدید است
         text = (
             f"سلام {message.from_user.first_name} 👋\n\n"
             "🌟 به ربات تست **Tolider** خوش آمدید!\n\n"
@@ -119,6 +115,9 @@ def handle_help(message: types.Message):
     func=lambda m: not (m.text and m.text.startswith("/")),
 )
 def handle_input(message: types.Message):
+    user_id = message.from_user.id  # 👈 این خط جا افتاده بود!
+    logger.info(f"[LOG] New message from user {user_id}.")
+
     # 👈 چک میکنیم اگر کاربر قبلا تست خود را انجام داده باشد
     if user_id in trial_used_users:
         bot.reply_to(
@@ -169,7 +168,6 @@ def handle_input(message: types.Message):
 
     # 👈 اضافه کردن به صف
     queue_position = queue_manager.add_to_queue(user_id, message, is_link)
-    
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
     # پیام آپ‌سل (Upsell) + شماره صف
@@ -180,8 +178,7 @@ def handle_input(message: types.Message):
         f"⏳ درخواست شما به زودی پردازش می‌شود.\n"
         f"🚀 برای دریافت سریع و بدون صف، می‌توانید از **نسخه پرمیوم** استفاده کنید."
     )
-    
-    # 👈 اینجا دیگه `_process` رو مستقیم صدا نمی‌زنیم، کارگر صف این کار رو میکنه.
+
 # ===========================================
 # پردازش اصلی
 # ===========================================
@@ -192,9 +189,7 @@ def _process(message: types.Message, is_link: bool):
     try:
         # مرحله 1 و 2
         logger.info(f"[LOG] Step 1 & 2: Download and audio extraction...")
-        video_path, audio_path = process_incoming(
-            bot, message, is_link, progress=reporter
-        )
+        video_path, audio_path = process_incoming(bot, message, is_link, progress=reporter)
 
         # مرحله 3
         logger.info(f"[LOG] Step 3: Sending to Gemini...")
@@ -225,20 +220,18 @@ def _process(message: types.Message, is_link: bool):
             f"⚠️ <b>توجه:</b> شما از فرصت تست رایگان خود استفاده کردید."
         )
         
-        # 👈 اینجا کاربر رو از لیست تایید شده‌ها خارج و به لیست استفاده‌کنندگان منتقل میکنیم
+        # 👈 خروج کاربر از لیست تایید شده و اضافه به لیست استفاده‌کنندگان
         authenticated_users.discard(message.from_user.id)
         trial_used_users.add(message.from_user.id)
         logger.info(f"[LOG] User {message.from_user.id} has used their 1-time trial.")
 
     except VideoTooLongError as e:
-        # 👈 مدیریت اختصاصی خطای ویدیوی طولانی
         logger.warning(f"[LOG] Video too long for user {message.from_user.id}.")
         reporter.error(
             f"⚠️ <b>محدودیت نسخه تست:</b>\n\n"
             f"{str(e)}\n\n"
             f"🚀 برای پردازش ویدیوهای طولانی، از نسخه پرمیوم استفاده کنید."
         )
-
 
     except Exception as e:
         logger.exception(f"[ERROR] Processing error for user {message.from_user.id}: {e}")
@@ -308,15 +301,10 @@ def getMessage():
 
 def run_bot():
     """اجرای ربات: روی Render با Webhook، روی سیستم شخصی با Polling"""
-
-   # 👈 شروع کارگر صف
+    
+    # 👈 شروع کارگر صف
     queue_manager.start_worker(_process, _mark_free)
 
-    # اگر روی Render باشیم...
-    if RENDER_EXTERNAL_URL:
-        print("[LOG] Running on Render. Setting webhook...")
-
-    
     # اگر روی Render باشیم، این متغیر وجود دارد
     if RENDER_EXTERNAL_URL:
         print("[LOG] Running on Render. Setting webhook...")
@@ -331,5 +319,5 @@ def run_bot():
     # اگر روی سیستم شخصی باشیم (متغیر وجود ندارد)
     else:
         print("[LOG] Running locally. Starting infinity polling...")
-        bot.remove_webhook() # حذف وبهوک قبلی برای جلوگیری از تداخل
+        bot.remove_webhook()
         bot.infinity_polling(timeout=30, long_polling_timeout=25)
