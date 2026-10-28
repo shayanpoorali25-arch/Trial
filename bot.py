@@ -34,6 +34,9 @@ INSTAGRAM_PATTERN = re.compile(
     r"^https?://(?:www\.)?(?:instagram\.com|instagr\.am)/(?:p|reel|reels|tv)/[A-Za-z0-9_-]+"
 )
 
+authenticated_users: set = set()  # کاربرانی که لایسنس تایید شده دارند
+trial_used_users: set = set()     # 👈 کاربرانی که تستشون رو انجام دادند
+
 # ===========================================
 # مدیریت کاربران و وضعیت‌ها
 # ===========================================
@@ -116,16 +119,21 @@ def handle_help(message: types.Message):
     func=lambda m: not (m.text and m.text.startswith("/")),
 )
 def handle_input(message: types.Message):
-    user_id = message.from_user.id
-    logger.info(f"[LOG] New message from user {user_id}.")
+    # 👈 چک میکنیم اگر کاربر قبلا تست خود را انجام داده باشد
+    if user_id in trial_used_users:
+        bot.reply_to(
+            message, 
+            "❌ شما قبلاً از فرصت تست رایگان خود استفاده کرده‌اید.\n\n"
+            "🚀 برای ادامه کار، لطفاً از **نسخه پرمیوم** استفاده کنید."
+        )
+        return
 
-    # 👈 مرحله احراز هویت (لایسنس)
+    # مرحله احراز هویت (لایسنس)
     if user_id not in authenticated_users:
         if not message.text:
             bot.reply_to(message, "❌ لطفاً ابتدا کد لایسنس خود را به صورت متن ارسال کنید.")
             return
 
-        # ارسال لایسنس به کلادفلر
         is_valid, msg = verify_and_consume_license(message.text)
         
         if is_valid:
@@ -138,11 +146,7 @@ def handle_input(message: types.Message):
             )
         else:
             logger.warning(f"[LOG] User {user_id} failed authentication.")
-            bot.reply_to(
-                message, 
-                f"❌ {msg}\n\n"
-                "اگر لایسنس ندارید، از کانال ما تهیه کنید."
-            )
+            bot.reply_to(message, f"❌ {msg}\n\nاگر لایسنس ندارید، از کانال ما تهیه کنید.")
         return
 
     # 👈 مرحله پردازش (کاربر احراز هویت شده است)
@@ -217,8 +221,14 @@ def _process(message: types.Message, is_link: bool):
         reporter.finish(
             f"✅ <b>عملیات با موفقیت انجام شد!</b>\n\n"
             f"🎬 ویدیوی شما زیرنویس شد و در پیام پایین ارسال گردید.\n"
-            f"⏱ زمان کل: {int(time.time() - reporter.start_time)} ثانیه"
+            f"⏱ زمان کل: {int(time.time() - reporter.start_time)} ثانیه\n\n"
+            f"⚠️ <b>توجه:</b> شما از فرصت تست رایگان خود استفاده کردید."
         )
+        
+        # 👈 اینجا کاربر رو از لیست تایید شده‌ها خارج و به لیست استفاده‌کنندگان منتقل میکنیم
+        authenticated_users.discard(message.from_user.id)
+        trial_used_users.add(message.from_user.id)
+        logger.info(f"[LOG] User {message.from_user.id} has used their 1-time trial.")
 
     except VideoTooLongError as e:
         # 👈 مدیریت اختصاصی خطای ویدیوی طولانی
