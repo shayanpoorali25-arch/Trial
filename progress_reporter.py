@@ -56,12 +56,8 @@ class ProgressReporter:
                 # مراحل انجام شده
                 lines.append(f"✅ مرحله {i+1}: {stage_name}")
             elif i == self.current_stage:
-                # مرحله فعلی
+                # مرحله فعلی (بدون نمایش متن‌های ریز زیرشاخه)
                 lines.append(f"⏳ مرحله {i+1}: {stage_name}")
-                if self.sub_text:
-                    for sub in self.sub_text.split("\n"):
-                        # استفاده از ۴ تا لوزی برای ایجاد تو رفتگی (Indent)
-                        lines.append(f"🔸🔸 {sub}")
             else:
                 # مراحل آینده
                 lines.append(f"⬜ مرحله {i+1}: {stage_name}")
